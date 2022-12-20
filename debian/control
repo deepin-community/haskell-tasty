@@ -1,0 +1,76 @@
+Source: haskell-tasty
+Maintainer: Debian Haskell Group <pkg-haskell-maintainers@lists.alioth.debian.org>
+Uploaders: Clint Adams <clint@debian.org>
+Priority: optional
+Section: haskell
+Rules-Requires-Root: no
+Build-Depends: debhelper (>= 10),
+ haskell-devscripts (>= 0.13),
+ cdbs,
+ ghc (>= 8.4.3),
+ ghc-prof,
+ libghc-ansi-terminal-dev (>= 0.9),
+ libghc-ansi-terminal-prof,
+ libghc-async-dev (>= 2.0),
+ libghc-async-prof,
+ libghc-clock-dev (>= 0.4.4.0),
+ libghc-clock-prof,
+ libghc-optparse-applicative-dev (>= 0.14),
+ libghc-optparse-applicative-prof,
+ libghc-tagged-dev (>= 0.5),
+ libghc-tagged-prof,
+ libghc-unbounded-delays-dev (>= 0.1),
+ libghc-unbounded-delays-prof,
+ libghc-wcwidth-dev,
+ libghc-wcwidth-prof,
+Build-Depends-Indep: ghc-doc,
+ libghc-ansi-terminal-doc,
+ libghc-async-doc,
+ libghc-clock-doc,
+ libghc-optparse-applicative-doc,
+ libghc-tagged-doc,
+ libghc-unbounded-delays-doc,
+ libghc-wcwidth-doc,
+Standards-Version: 4.1.4
+Homepage: https://github.com/feuerbach/tasty
+Vcs-Browser: https://salsa.debian.org/haskell-team/DHG_packages/tree/master/p/haskell-tasty
+Vcs-Git: https://salsa.debian.org/haskell-team/DHG_packages.git [p/haskell-tasty]
+X-Description: Haskell testing framework
+ A modern and extensible testing framework.
+
+Package: libghc-tasty-dev
+Architecture: any
+Depends: ${haskell:Depends},
+ ${shlibs:Depends},
+ ${misc:Depends},
+Recommends: ${haskell:Recommends},
+Suggests: ${haskell:Suggests},
+Provides: ${haskell:Provides},
+Description: ${haskell:ShortDescription}${haskell:ShortBlurb}
+ ${haskell:LongDescription}
+ .
+ ${haskell:Blurb}
+
+Package: libghc-tasty-prof
+Architecture: any
+Depends: ${haskell:Depends},
+ ${misc:Depends},
+Recommends: ${haskell:Recommends},
+Suggests: ${haskell:Suggests},
+Provides: ${haskell:Provides},
+Description: ${haskell:ShortDescription}${haskell:ShortBlurb}
+ ${haskell:LongDescription}
+ .
+ ${haskell:Blurb}
+
+Package: libghc-tasty-doc
+Architecture: all
+Section: doc
+Depends: ${misc:Depends},
+ ${haskell:Depends},
+Recommends: ${haskell:Recommends},
+Suggests: ${haskell:Suggests},
+Description: ${haskell:ShortDescription}${haskell:ShortBlurb}
+ ${haskell:LongDescription}
+ .
+ ${haskell:Blurb}
