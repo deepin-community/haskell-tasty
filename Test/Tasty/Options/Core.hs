@@ -37,6 +37,7 @@ instance IsOption NumThreads where
   optionName = return "num-threads"
   optionHelp = return "Number of threads to use for tests execution"
   optionCLParser = mkOptionCLParser (short 'j' <> metavar "NUMBER")
+  showDefaultValue _ = Just "# of cores/capabilities"
 
 -- | Filtering function to prevent non-positive number of threads
 onlyPositive :: NumThreads -> Bool

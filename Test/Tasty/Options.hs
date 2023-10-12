@@ -15,6 +15,7 @@ module Test.Tasty.Options
   , lookupOption
   , singleOption
   , OptionDescription(..)
+  , uniqueOptionDescriptions
     -- * Utilities
   , flagCLParser
   , mkFlagCLParser
@@ -25,18 +26,17 @@ module Test.Tasty.Options
 
 import qualified Data.Map as Map
 import Data.Map (Map)
+import Data.Maybe
 import Data.Char (toLower)
 import Data.Tagged
 import Data.Proxy
 import Data.Typeable
 import Data.Monoid
 import Data.Foldable
+import qualified Data.Semigroup as Sem
+import qualified Data.Set as S
 import Prelude hiding (mod) -- Silence FTP import warnings
 import Options.Applicative
-#if MIN_VERSION_base(4,9,0)
-import Data.Semigroup (Semigroup)
-import qualified Data.Semigroup (Semigroup((<>)))
-#endif
 
 -- | An option is a data type that inhabits the `IsOption` type class.
 class Typeable v => IsOption v where
@@ -52,6 +52,12 @@ class Typeable v => IsOption v where
   -- | The option description or help string. This can be an arbitrary
   -- string.
   optionHelp :: Tagged v String
+  -- | How a 'defaultValue' should be displayed in the help string. 'Nothing'
+  -- (the default implementation) will result in nothing being displayed, while
+  -- @'Just' def@ will result in @def@ being advertised as the default in the
+  -- help string.
+  showDefaultValue :: v -> Maybe String
+  showDefaultValue _ = Nothing
   -- | A command-line option parser.
   --
   -- It has a default implementation in terms of the other methods.
@@ -62,16 +68,21 @@ class Typeable v => IsOption v where
   -- Even if you override this, you still should implement all the methods
   -- above, to allow alternative interfaces.
   --
-  -- Do not supply a default value here for this parser!
-  -- This is because if no value was provided on the command line we may
-  -- lookup the option e.g. in the environment. But if the parser always
-  -- succeeds, we have no way to tell whether the user really provided the
-  -- option on the command line.
+  -- Do not supply a default value (e.g., with the 'value' function) here
+  -- for this parser! This is because if no value was provided on the command
+  -- line we may lookup the option e.g. in the environment. But if the parser
+  -- always succeeds, we have no way to tell whether the user really provided
+  -- the option on the command line.
+  --
+  -- Similarly, do not use 'showDefaultWith' here, as it will be ignored. Use
+  -- the 'showDefaultValue' method of 'IsOption' instead.
 
   -- (If we don't specify a default, the option becomes mandatory.
   -- So, when we build the complete parser for OptionSet, we turn a
   -- failing parser into an always-succeeding one that may return an empty
   -- OptionSet.)
+  --
+  -- @since 1.3
   optionCLParser :: Parser v
   optionCLParser = mkOptionCLParser mempty
 
@@ -84,13 +95,13 @@ data OptionValue = forall v . IsOption v => OptionValue v
 newtype OptionSet = OptionSet (Map TypeRep OptionValue)
 
 -- | Later options override earlier ones
+instance Sem.Semigroup OptionSet where
+  OptionSet a <> OptionSet b =
+    OptionSet $ Map.unionWith (flip const) a b
 instance Monoid OptionSet where
   mempty = OptionSet mempty
-  OptionSet a `mappend` OptionSet b =
-    OptionSet $ Map.unionWith (flip const) a b
-#if MIN_VERSION_base(4,9,0)
-instance Semigroup OptionSet where
-  (<>) = mappend
+#if !MIN_VERSION_base(4,11,0)
+  mappend = (Sem.<>)
 #endif
 
 -- | Set the option value
@@ -118,6 +129,17 @@ singleOption v = setOption v mempty
 -- corresponding to a particular option.
 data OptionDescription where
   Option :: IsOption v => Proxy v -> OptionDescription
+
+-- | Remove duplicated 'OptionDescription', preserving existing order otherwise
+--
+-- @since 1.4.1
+uniqueOptionDescriptions :: [OptionDescription] -> [OptionDescription]
+uniqueOptionDescriptions = go S.empty
+  where
+    go _ [] = []
+    go acc (Option o : os)
+      | typeOf o `S.member` acc = go acc os
+      | otherwise = Option o : go (S.insert (typeOf o) acc) os
 
 -- | Command-line parser to use with flags
 flagCLParser

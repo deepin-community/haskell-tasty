@@ -2,15 +2,16 @@
 module Test.Tasty.Patterns.Eval (Path, eval, withFields, asB) where
 
 import Prelude hiding (Ordering(..))
-import Control.Monad.Reader
-import Control.Monad.Error.Class (throwError) -- see #201
+import Control.Monad ((<=<))
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Reader (ReaderT, runReaderT, ask)
 import qualified Data.Sequence as Seq
 import Data.Foldable
-import Data.List
+import Data.List (findIndex, intercalate, isInfixOf, isPrefixOf, tails)
 import Data.Maybe
 import Data.Char
 import Test.Tasty.Patterns.Types
-#if !MIN_VERSION_base(4,8,0)
+#if !MIN_VERSION_base(4,9,0)
 import Control.Applicative
 import Data.Traversable
 #endif
@@ -26,6 +27,9 @@ data Value
   deriving Show
 
 type M = ReaderT Path (Either String)
+
+throwError :: String -> M a
+throwError s = lift $ Left s
 
 asS :: Value -> M String
 asS v = return $

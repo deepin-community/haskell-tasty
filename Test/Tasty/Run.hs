@@ -14,9 +14,11 @@ import qualified Data.Foldable as F
 import Data.Maybe
 import Data.Graph (SCC(..), stronglyConnComp)
 import Data.Typeable
-import Control.Monad.State
-import Control.Monad.Writer
-import Control.Monad.Reader
+import Control.Monad (forever, guard, join, liftM)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Reader (ReaderT(..), local, ask)
+import Control.Monad.Trans.Writer (WriterT(..), execWriterT, mapWriterT, tell)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.Timeout (timeout)
@@ -24,6 +26,7 @@ import Control.Concurrent.Async
 import Control.Exception as E
 import Control.Applicative
 import Control.Arrow
+import Data.Monoid (First(..))
 import GHC.Conc (labelThread)
 import Prelude  -- Silence AMP and FTP import warnings
 
@@ -34,7 +37,8 @@ import Test.Tasty.Patterns.Types
 import Test.Tasty.Options
 import Test.Tasty.Options.Core
 import Test.Tasty.Runners.Reducers
-import Test.Tasty.Runners.Utils (timed)
+import Test.Tasty.Runners.Utils (timed, forceElements)
+import Test.Tasty.Providers.ConsoleFormat (noResultDetails)
 
 -- | Current status of a test
 data Status
@@ -105,7 +109,15 @@ executeTest action statusVar timeoutOpt inits fins = mask $ \restore -> do
     -- handler doesn't interfere with our timeout.
     withAsync (action yieldProgress) $ \asy -> do
       labelThread (asyncThreadId asy) "tasty_test_execution_thread"
-      timed $ applyTimeout timeoutOpt $ wait asy
+      timed $ applyTimeout timeoutOpt $ do
+        r <- wait asy
+        -- Not only wait for the result to be returned, but make sure to
+        -- evalute it inside applyTimeout; see #280.
+        evaluate $
+          resultOutcome r `seq`
+          forceElements (resultDescription r) `seq`
+          forceElements (resultShortDescription r)
+        return r
 
   -- no matter what, try to run each finalizer
   mbExn <- destroyResources restore
@@ -157,6 +169,7 @@ executeTest action statusVar timeoutOpt inits fins = mask $ \restore -> do
                 "Timed out after " ++ tstr
             , resultShortDescription = "TIMEOUT"
             , resultTime = fromIntegral t
+            , resultDetailsPrinter = noResultDetails
             }
       fromMaybe timeoutResult <$> timeout t a
 
@@ -190,7 +203,7 @@ executeTest action statusVar timeoutOpt inits fins = mask $ \restore -> do
     -- I'm not sure whether we should get rid of this altogether. For most
     -- providers this is either difficult to implement or doesn't make
     -- sense at all.
-    -- See also https://github.com/feuerbach/tasty/issues/33
+    -- See also https://github.com/UnkindPartition/tasty/issues/33
     yieldProgress _ = return ()
 
 type InitFinPair = (Seq.Seq Initializer, Seq.Seq Finalizer)
@@ -231,10 +244,10 @@ createTestActions opts0 tree = do
         (trivialFold :: TreeFold Tr)
           { foldSingle = runSingleTest
           , foldResource = addInitAndRelease
-          , foldGroup = \name (Traversal a) ->
-              Traversal $ local (first (Seq.|> name)) a
-          , foldAfter = \deptype pat (Traversal a) ->
-              Traversal $ local (second ((deptype, pat) :)) a
+          , foldGroup = \_opts name (Traversal a) ->
+              Traversal $ mapWriterT (local (first (Seq.|> name))) a
+          , foldAfter = \_opts deptype pat (Traversal a) ->
+              Traversal $ mapWriterT (local (second ((deptype, pat) :))) a
           }
         opts0 tree
   (tests, fins) <- unwrap (mempty :: Path) (mempty :: Deps) traversal
@@ -252,14 +265,14 @@ createTestActions opts0 tree = do
     runSingleTest :: IsTest t => OptionSet -> TestName -> t -> Tr
     runSingleTest opts name test = Traversal $ do
       statusVar <- liftIO $ atomically $ newTVar NotStarted
-      (parentPath, deps) <- ask
+      (parentPath, deps) <- lift ask
       let
         path = parentPath Seq.|> name
         act (inits, fins) =
           executeTest (run opts test) statusVar (lookupOption opts) inits fins
       tell ([(act, (statusVar, path, deps))], mempty)
-    addInitAndRelease :: ResourceSpec a -> (IO a -> Tr) -> Tr
-    addInitAndRelease (ResourceSpec doInit doRelease) a = wrap $ \path deps -> do
+    addInitAndRelease :: OptionSet -> ResourceSpec a -> (IO a -> Tr) -> Tr
+    addInitAndRelease _opts (ResourceSpec doInit doRelease) a = wrap $ \path deps -> do
       initVar <- atomically $ newTVar NotCreated
       (tests, fins) <- unwrap path deps $ a (getResource initVar)
       let ntests = length tests
@@ -267,7 +280,7 @@ createTestActions opts0 tree = do
       let
         ini = Initializer doInit initVar
         fin = Finalizer doRelease initVar finishVar
-        tests' = map (first $ local $ (Seq.|> ini) *** (fin Seq.<|)) tests
+        tests' = map (first (\f (x, y) -> f (x Seq.|> ini, fin Seq.<| y))) tests
       return (tests', fins Seq.|> fin)
     wrap
       :: (Path ->
@@ -322,6 +335,7 @@ resolveDeps tests = checkCycles $ do
           , resultDescription = ""
           , resultShortDescription = "SKIP"
           , resultTime = 0
+          , resultDetailsPrinter = noResultDetails
           }
       }
   return ((action, statusVar), (path0, dep_paths))
