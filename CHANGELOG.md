@@ -1,6 +1,95 @@
 Changes
 =======
 
+Version 1.4.2.3
+---------------
+
+_2022-05-10_
+
+- Drop `mtl` dependency
+- Warning-free under GHC 8.0 - 9.2
+
+Version 1.4.2.2
+---------------
+
+_2022-05-10_
+
+- Fix compilation with `mtl-2.3`
+- Tested with GHC 8.0 - 9.2; dropped support for GHC 7.x
+
+Version 1.4.2.1
+---------------
+
+Fix warnings under GHC 9.2
+
+Version 1.4.2
+-------------
+
+* Add `consoleTestReporterWithHook`
+* Suggest pattern to rerun an individual failing test
+* Add `Test.Tasty.Patterns.Printer`
+
+Version 1.4.1
+-------------
+
+Deduplicate command line options when there is more than one TestReporter.
+Expose the function that does that, `uniqueOptionDescriptions`.
+
+Version 1.4.0.3
+---------------
+
+Fix CPP warning/error `macro expansion producing 'defined' has undefined behavior`
+
+Version 1.4.0.2
+---------------
+
+Automatically disable the dependency on the `clock` package when compiled by ghcjs.
+
+Version 1.4.0.1
+---------------
+
+The only point of this release is to introduce compatibility with GHCs back to 7.0
+(see https://github.com/UnkindPartition/tasty/pull/287).
+
+Note, however, that these changes are not merged to the master branch, and the
+future releases will only support the GHC/base versions from the last 5 years,
+as per our usual policy. To test with even older GHCs, you'll have to use this
+particular version of tasty (or have the constraint solver pick it for you when
+testing with older GHCs).
+
+The source of this release is in the `support-old-ghcs` branch of the tasty
+repository.
+
+Version 1.4
+-----------
+
+* Change the `TreeFold` data type to give all functions access to `OptionSet`
+* Fix a bug where a looping failure message escaped the time out set for the
+    test
+* Fix a bug where pattern changes inside the `TestTree` weren't respected
+
+Version 1.3.1
+-------------
+
+* Add an ability for a test provider to print colorful/formatted output
+
+Version 1.3
+-----------
+
+* `IsOption` has a new method `showDefaultValue` for customizing how
+  `defaultValue`s are rendered in the `--help` output.
+* Drop support for GHCs older than 5 years
+* Do not install handlers for the signals that dump core
+* Export the `AnsiTricks` type/option
+* In addition to a `Parser`, `optionParser` and `suiteOptionParser` now return
+  a `[String]` representing warning messages:
+  * A warning is emitted if an `IsOption` instance defines multiple options in
+    the implementation of `optionCLParser`.
+  * An warning is emitted if an `IsOption` instance's `optionCLParser`
+    implementation assigns a default value (e.g., with
+    `Options.Applicative.value`), as this interferes with `tasty`'s ability to
+    read environment variable arguments.
+
 Version 1.2.3
 -------------
 
@@ -59,7 +148,7 @@ The new patterns have been around for a relatively short time (5 months), so
 hopefully the breakage won't be too big. I'm sorry about any problems caused by
 the change.
 
-See <https://github.com/feuerbach/tasty/issues/220> for the discussion.
+See <https://github.com/UnkindPartition/tasty/issues/220> for the discussion.
 
 * The field separator in patterns is changed from slash (`/`) to period (`.`),
   and `.` is now allowed in raw patterns.
@@ -284,7 +373,7 @@ Version 0.8.1.3
 ---------------
 
 Be careful not to export the `Show (a -> b)` instance, see
-<https://github.com/feuerbach/tasty/issues/71>
+<https://github.com/UnkindPartition/tasty/issues/71>
 
 Version 0.8.1.2
 ---------------
@@ -388,7 +477,7 @@ Print the failure description in red
 Version 0.4.0.1
 ---------------
 
-Fix a bug ([#25](https://github.com/feuerbach/tasty/issues/25))
+Fix a bug ([#25](https://github.com/UnkindPartition/tasty/issues/25))
 
 Version 0.4
 -----------

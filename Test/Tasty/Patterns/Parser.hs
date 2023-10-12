@@ -28,18 +28,8 @@ type Token = ReadP
 newtype Parser a = Parser (ReadP a)
   deriving (Functor, Applicative, Alternative, Monad, MonadPlus)
 
-#if !MIN_VERSION_base(4,6,0)
-instance Applicative ReadP where
-  pure = return
-  (<*>) = ap
-instance Alternative ReadP where
-  empty = mzero
-  (<|>) = mplus
-#endif
-
-
 data ParseResult a = Success a | Invalid | Ambiguous [a]
-  deriving Show
+  deriving (Eq, Show)
 
 token :: Token a -> Parser a
 token a = Parser (a <* skipSpaces)

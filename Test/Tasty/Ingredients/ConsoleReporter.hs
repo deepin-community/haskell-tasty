@@ -1,8 +1,9 @@
--- vim:fdm=marker:foldtext=foldtext()
+-- vim:fdm=marker
 {-# LANGUAGE BangPatterns, ImplicitParams, MultiParamTypeClasses, DeriveDataTypeable, FlexibleContexts #-}
 -- | Console reporter ingredient
 module Test.Tasty.Ingredients.ConsoleReporter
   ( consoleTestReporter
+  , consoleTestReporterWithHook
   , Quiet(..)
   , HideSuccesses(..)
   , AnsiTricks(..)
@@ -22,41 +23,44 @@ module Test.Tasty.Ingredients.ConsoleReporter
   , TestOutput(..)
   , buildTestOutput
   , foldTestOutput
+  , withConsoleFormat
   ) where
 
-import Prelude hiding (fail)
-import Control.Monad.State hiding (fail)
-import Control.Monad.Reader hiding (fail,reader)
+import Prelude hiding (fail, EQ)
+import Control.Monad (join, unless, void, when, (<=<))
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Reader (Reader, runReader, ask)
+import Control.Monad.Trans.State (evalState, evalStateT, get, modify, put)
 import Control.Concurrent.STM
 import Control.Exception
 import Test.Tasty.Core
+import Test.Tasty.Providers.ConsoleFormat
 import Test.Tasty.Run
 import Test.Tasty.Ingredients
+import Test.Tasty.Ingredients.ListTests
 import Test.Tasty.Options
 import Test.Tasty.Options.Core
+import Test.Tasty.Patterns
+import Test.Tasty.Patterns.Printer
+import Test.Tasty.Patterns.Types
 import Test.Tasty.Runners.Reducers
 import Test.Tasty.Runners.Utils
 import Text.Printf
 import qualified Data.IntMap as IntMap
 import Data.Char
-#ifdef UNIX
+#ifdef VERSION_wcwidth
 import Data.Char.WCWidth (wcwidth)
 #endif
+import Data.List (isInfixOf)
 import Data.Maybe
 import Data.Monoid (Any(..))
+import qualified Data.Semigroup as Sem
 import Data.Typeable
-import Options.Applicative hiding (str, Success, Failure)
+import Options.Applicative hiding (action, str, Success, Failure)
 import System.IO
 import System.Console.ANSI
-#if !MIN_VERSION_base(4,8,0)
-import Data.Proxy
-import Data.Foldable hiding (concatMap,elem,sequence_)
-#endif
-#if MIN_VERSION_base(4,9,0)
-import Data.Semigroup (Semigroup)
-import qualified Data.Semigroup (Semigroup((<>)))
-#else
-import Data.Monoid
+#if !MIN_VERSION_base(4,11,0)
+import Data.Foldable (foldMap)
 #endif
 
 --------------------------------------------------
@@ -83,13 +87,23 @@ data TestOutput
 
 -- The monoid laws should hold observationally w.r.t. the semantics defined
 -- in this module
+instance Sem.Semigroup TestOutput where
+  (<>) = Seq
 instance Monoid TestOutput where
   mempty = Skip
-  mappend = Seq
-#if MIN_VERSION_base(4,9,0)
-instance Semigroup TestOutput where
-  (<>) = mappend
+#if !MIN_VERSION_base(4,11,0)
+  mappend = (Sem.<>)
 #endif
+
+applyHook :: ([TestName] -> Result -> IO Result) -> TestOutput -> TestOutput
+applyHook hook = go []
+  where
+    go path (PrintTest name printName printResult) =
+      PrintTest name printName (printResult <=< hook (name : path))
+    go path (PrintHeading name printName printBody) =
+      PrintHeading name printName (go (name : path) printBody)
+    go path (Seq a b) = Seq (go path a) (go path b)
+    go _ Skip = mempty
 
 type Level = Int
 
@@ -135,11 +149,13 @@ buildTestOutput opts tree =
           when (not $ null rDesc) $
             (if resultSuccessful result then infoOk else infoFail) $
               printf "%s%s\n" (indent $ level + 1) (formatDesc (level+1) rDesc)
+          case resultDetailsPrinter result of
+            ResultDetailsPrinter action -> action level withConsoleFormat
 
       return $ PrintTest name printTestName printTestResult
 
-    runGroup :: TestName -> Ap (Reader Level) TestOutput -> Ap (Reader Level) TestOutput
-    runGroup name grp = Ap $ do
+    runGroup :: OptionSet -> TestName -> Ap (Reader Level) TestOutput -> Ap (Reader Level) TestOutput
+    runGroup _opts name grp = Ap $ do
       level <- ask
       let
         printHeading = printf "%s%s\n" (indent level) name
@@ -280,12 +296,12 @@ data Statistics = Statistics
   , statFailures :: !Int -- ^ Number of active tests that failed.
   }
 
+instance Sem.Semigroup Statistics where
+  Statistics t1 f1 <> Statistics t2 f2 = Statistics (t1 + t2) (f1 + f2)
 instance Monoid Statistics where
-  Statistics t1 f1 `mappend` Statistics t2 f2 = Statistics (t1 + t2) (f1 + f2)
   mempty = Statistics 0 0
-#if MIN_VERSION_base(4,9,0)
-instance Semigroup Statistics where
-  (<>) = mappend
+#if !MIN_VERSION_base(4,11,0)
+  mappend = (Sem.<>)
 #endif
 
 -- | @computeStatistics@ computes a summary 'Statistics' for
@@ -381,13 +397,56 @@ statusMapResult lookahead0 smap
 
 -- | A simple console UI
 consoleTestReporter :: Ingredient
-consoleTestReporter =
-  TestReporter
-    [ Option (Proxy :: Proxy Quiet)
-    , Option (Proxy :: Proxy HideSuccesses)
-    , Option (Proxy :: Proxy UseColor)
-    , Option (Proxy :: Proxy AnsiTricks)
-    ] $
+consoleTestReporter = TestReporter consoleTestReporterOptions $ \opts tree ->
+  let
+    TestPattern pattern = lookupOption opts
+    tests = testsNames opts tree
+    hook = (return .) . appendPatternIfTestFailed tests pattern
+    TestReporter _ cb = consoleTestReporterWithHook hook
+  in cb opts tree
+
+appendPatternIfTestFailed
+  :: [TestName] -- ^ list of (pre-intercalated) test names
+  -> Maybe Expr -- ^ current pattern, if any
+  -> [TestName] -- ^ name of current test, represented as a list of group names
+  -> Result     -- ^ vanilla result
+  -> Result
+appendPatternIfTestFailed [_] _ _ res = res -- if there is only one test, nothing to refine
+appendPatternIfTestFailed _ _ [] res  = res -- should be impossible
+appendPatternIfTestFailed tests currentPattern (name : names) res = case resultOutcome res of
+  Success -> res
+  Failure{} -> res { resultDescription = resultDescription res ++ msg }
+  where
+    msg = "\nUse -p '" ++ escapeQuotes (printAwkExpr pattern) ++ "' to rerun this test only."
+
+    escapeQuotes = concatMap $ \c -> if c == '\'' then "'\\''" else [c]
+
+    findPattern [_] pat _ = ERE pat
+    findPattern _  pat [] = EQ (Field (IntLit 0)) (StringLit pat)
+    findPattern ts pat (n : ns) = let pat' = n ++ '.' : pat in
+      findPattern (filter (pat' `isInfixOf`) ts) pat' ns
+
+    individualPattern = findPattern (filter (name `isInfixOf`) tests) name names
+
+    pattern = maybe id And currentPattern individualPattern
+
+consoleTestReporterOptions :: [OptionDescription]
+consoleTestReporterOptions =
+  [ Option (Proxy :: Proxy Quiet)
+  , Option (Proxy :: Proxy HideSuccesses)
+  , Option (Proxy :: Proxy UseColor)
+  , Option (Proxy :: Proxy AnsiTricks)
+  ]
+
+-- | A simple console UI with a hook to postprocess results,
+-- depending on their names and external conditions
+-- (e. g., its previous outcome, stored in a file).
+-- Names are listed in reverse order:
+-- from test's own name to a name of the outermost test group.
+--
+-- @since 1.4.2
+consoleTestReporterWithHook :: ([TestName] -> Result -> IO Result) -> Ingredient
+consoleTestReporterWithHook hook = TestReporter consoleTestReporterOptions $
   \opts tree -> Just $ \smap -> do
 
   let
@@ -417,7 +476,7 @@ consoleTestReporter =
             ?colors = useColor whenColor isTermColor
 
           let
-            toutput = buildTestOutput opts tree
+            toutput = applyHook hook $ buildTestOutput opts tree
 
           case () of { _
             | hideSuccesses && isTerm && ansiTricks ->
@@ -442,7 +501,9 @@ instance IsOption Quiet where
   optionHelp = return "Do not produce any output; indicate success only by the exit code"
   optionCLParser = mkFlagCLParser (short 'q') (Quiet True)
 
--- | Report only failed tests
+-- | Report only failed tests.
+--
+-- At the moment, this option only works globally. As an argument to 'localOption', it does nothing.
 newtype HideSuccesses = HideSuccesses Bool
   deriving (Eq, Ord, Typeable)
 instance IsOption HideSuccesses where
@@ -466,8 +527,9 @@ instance IsOption UseColor where
   defaultValue = Auto
   parseValue = parseUseColor
   optionName = return "color"
-  optionHelp = return "When to use colored output (default: 'auto')"
+  optionHelp = return "When to use colored output"
   optionCLParser = mkOptionCLParser $ metavar "never|always|auto"
+  showDefaultValue = Just . displayUseColor
 
 -- | By default, when the option @--hide-successes@ is given and the output
 -- goes to an ANSI-capable terminal, we employ some ANSI terminal tricks to
@@ -477,13 +539,13 @@ instance IsOption UseColor where
 -- These tricks sometimes fail, however—in particular, when the test names
 -- happen to be longer than the width of the terminal window. See
 --
--- * <https://github.com/feuerbach/tasty/issues/152>
+-- * <https://github.com/UnkindPartition/tasty/issues/152>
 --
--- * <https://github.com/feuerbach/tasty/issues/250>
+-- * <https://github.com/UnkindPartition/tasty/issues/250>
 --
 -- When that happens, this option can be used to disable the tricks. In
 -- that case, the test name will be printed only once the test fails.
-newtype AnsiTricks = AnsiTricks Bool
+newtype AnsiTricks = AnsiTricks { getAnsiTricks :: Bool }
   deriving Typeable
 
 instance IsOption AnsiTricks where
@@ -493,7 +555,14 @@ instance IsOption AnsiTricks where
   optionHelp = return $
     -- Multiline literals don't work because of -XCPP.
     "Enable various ANSI terminal tricks. " ++
-    "Can be set to 'true' (default) or 'false'."
+    "Can be set to 'true' or 'false'."
+  showDefaultValue = Just . displayBool . getAnsiTricks
+
+displayBool :: Bool -> String
+displayBool b =
+  case b of
+    False -> "false"
+    True  -> "true"
 
 -- | @useColor when isTerm@ decides if colors should be used,
 --   where @isTerm@ indicates whether @stdout@ is a terminal device.
@@ -513,6 +582,13 @@ parseUseColor s =
     "always" -> return Always
     "auto"   -> return Auto
     _        -> Nothing
+
+displayUseColor :: UseColor -> String
+displayUseColor uc =
+  case uc of
+    Never  -> "never"
+    Always -> "always"
+    Auto   -> "auto"
 
 -- }}}
 
@@ -568,15 +644,14 @@ data Maximum a
   = Maximum a
   | MinusInfinity
 
+instance Ord a => Sem.Semigroup (Maximum a) where
+  Maximum a <> Maximum b = Maximum (a `max` b)
+  MinusInfinity <> a = a
+  a <> MinusInfinity = a
 instance Ord a => Monoid (Maximum a) where
   mempty = MinusInfinity
-
-  Maximum a `mappend` Maximum b = Maximum (a `max` b)
-  MinusInfinity `mappend` a = a
-  a `mappend` MinusInfinity = a
-#if MIN_VERSION_base(4,9,0)
-instance Ord a => Semigroup (Maximum a) where
-  (<>) = mappend
+#if !MIN_VERSION_base(4,11,0)
+  mappend = (Sem.<>)
 #endif
 
 -- | Compute the amount of space needed to align \"OK\"s and \"FAIL\"s
@@ -586,7 +661,7 @@ computeAlignment opts =
   foldTestTree
     trivialFold
       { foldSingle = \_ name _ level -> Maximum (stringWidth name + level)
-      , foldGroup = \_ m -> m . (+ indentSize)
+      , foldGroup = \_opts _ m -> m . (+ indentSize)
       }
     opts
   where
@@ -603,7 +678,7 @@ computeAlignment opts =
 --   (This only works properly on Unix at the moment; on Windows, the function
 --   treats every character as width-1 like 'Data.List.length' does.)
 stringWidth :: String -> Int
-#ifdef UNIX
+#ifdef VERSION_wcwidth
 stringWidth = Prelude.sum . map charWidth
  where charWidth c = case wcwidth c of
         -1 -> 1  -- many chars have "undefined" width; default to 1 for these.
@@ -614,28 +689,38 @@ stringWidth = length
 
 -- (Potentially) colorful output
 ok, fail, skipped, infoOk, infoFail :: (?colors :: Bool) => String -> IO ()
-fail     = output BoldIntensity   Vivid Red
-ok       = output NormalIntensity Dull  Green
-skipped  = output NormalIntensity Dull  Magenta
-infoOk   = output NormalIntensity Dull  White
-infoFail = output NormalIntensity Dull  Red
+fail     = output failFormat
+ok       = output okFormat
+skipped  = output skippedFormat
+infoOk   = output infoOkFormat
+infoFail = output infoFailFormat
 
 output
   :: (?colors :: Bool)
-  => ConsoleIntensity
-  -> ColorIntensity
-  -> Color
+  => ConsoleFormat
   -> String
   -> IO ()
-output bold intensity color str
+output format = withConsoleFormat format . putStr
+
+-- | Run action with console configured for a specific output format
+--
+-- This function does not apply any output formats if colors are disabled at command
+-- line or console detection.
+--
+-- Can be used by providers that wish to provider specific result details printing,
+-- while re-using the tasty formats and coloring logic.
+--
+-- @since 1.3.1
+withConsoleFormat :: (?colors :: Bool) => ConsoleFormatPrinter
+withConsoleFormat format action
   | ?colors =
     (do
       setSGR
-        [ SetColor Foreground intensity color
-        , SetConsoleIntensity bold
+        [ SetColor Foreground (colorIntensity format) (color format)
+        , SetConsoleIntensity (consoleIntensity format)
         ]
-      putStr str
+      action
     ) `finally` setSGR []
-  | otherwise = putStr str
+  | otherwise = action
 
 -- }}}

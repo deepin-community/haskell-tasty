@@ -18,7 +18,7 @@ Features:
 
 To find out what's new, read the **[change log][]**.
 
-[change log]: https://github.com/feuerbach/tasty/blob/master/core/CHANGELOG.md
+[change log]: https://github.com/UnkindPartition/tasty/blob/master/core/CHANGELOG.md
 
 ## Example
 
@@ -75,7 +75,7 @@ unitTests = testGroup "Unit tests"
 
 And here is the output of the above program:
 
-![](https://raw.github.com/feuerbach/tasty/master/screenshot.png)
+![](https://raw.github.com/UnkindPartition/tasty/master/screenshot.png)
 
 (Note that whether QuickCheck finds a counterexample to the third property is
 determined by chance.)
@@ -103,7 +103,7 @@ The following providers exist:
   (based on [smallcheck](https://hackage.haskell.org/package/smallcheck))
 * [tasty-quickcheck](https://hackage.haskell.org/package/tasty-quickcheck) — for randomized
   property-based testing (based on [QuickCheck](http://hackage.haskell.org/package/QuickCheck))
-* [tasty-hedgehog](https://github.com/qfpl/tasty-hedgehog) — for randomized
+* [tasty-hedgehog](https://hackage.haskell.org/package/tasty-hedgehog) — for randomized
   property-based testing (based on [Hedgehog](https://hackage.haskell.org/package/hedgehog))
 * [tasty-hspec](https://hackage.haskell.org/package/tasty-hspec) — for
   [Hspec](https://hspec.github.io/) tests
@@ -112,7 +112,11 @@ The following providers exist:
   (based on [LeanCheck](https://hackage.haskell.org/package/leancheck))
 * [tasty-program](https://hackage.haskell.org/package/tasty-program) — run
   external program and test whether it terminates successfully
-* [tasty-wai](https://hackage.haskell.org/package/tasty-wai) - for testing [wai](https://hackage.haskell.org/wai) endpoints.
+* [tasty-wai](https://hackage.haskell.org/package/tasty-wai) — 
+  for testing [wai](https://hackage.haskell.org/wai) endpoints.
+* [tasty-inspection-testing](https://hackage.haskell.org/package/tasty-inspection-testing) —
+  for compile-time testing of code properties
+  (based on [inspection-testing](http://hackage.haskell.org/package/inspection-testing)).
 
 [tasty-golden]: https://hackage.haskell.org/package/tasty-golden
 
@@ -149,10 +153,13 @@ discovers tests based on the function names and generate the boilerplate code fo
 you
 * [tasty-hunit-adapter](https://hackage.haskell.org/package/tasty-hunit-adapter)
   converts existing HUnit test suites into tasty test suites
-* [tasty-discover](https://github.com/lwm/tasty-discover) automatically discovers
+* [tasty-discover](https://hackage.haskell.org/package/tasty-discover) automatically discovers
 your tests.
-* [tasty-expected-failure](https://github.com/nomeata/tasty-expected-failure) provides
+* [tasty-expected-failure](https://hackage.haskell.org/package/tasty-expected-failure) provides
 test markers for when you expect failures or wish to ignore tests.
+* [tasty-bench](https://hackage.haskell.org/package/tasty-bench) covers performance
+regression testing and extends `tasty` to a benchmark framework
+similar to `criterion` and `gauge`.
 
 
 ## Options
@@ -181,10 +188,12 @@ Mmm... tasty test suite
 
 Usage: test [-p|--pattern PATTERN] [-t|--timeout DURATION] [-l|--list-tests]
             [-j|--num-threads NUMBER] [-q|--quiet] [--hide-successes]
-            [--color never|always|auto] [--quickcheck-tests NUMBER]
-            [--quickcheck-replay SEED] [--quickcheck-show-replay]
-            [--quickcheck-max-size NUMBER] [--quickcheck-max-ratio NUMBER]
-            [--quickcheck-verbose] [--smallcheck-depth NUMBER]
+            [--color never|always|auto] [--ansi-tricks ARG]
+            [--smallcheck-depth NUMBER] [--smallcheck-max-count NUMBER]
+            [--quickcheck-tests NUMBER] [--quickcheck-replay SEED]
+            [--quickcheck-show-replay] [--quickcheck-max-size NUMBER]
+            [--quickcheck-max-ratio NUMBER] [--quickcheck-verbose]
+            [--quickcheck-shrinks NUMBER]
 
 Available options:
   -h,--help                Show this help text
@@ -194,13 +203,21 @@ Available options:
                            default: s)
   -l,--list-tests          Do not run the tests; just print their names
   -j,--num-threads NUMBER  Number of threads to use for tests execution
+                           (default: # of cores/capabilities)
   -q,--quiet               Do not produce any output; indicate success only by
                            the exit code
   --hide-successes         Do not print tests that passed successfully
   --color never|always|auto
-                           When to use colored output (default: 'auto')
+                           When to use colored output (default: auto)
+  --ansi-tricks ARG        Enable various ANSI terminal tricks. Can be set to
+                           'true' or 'false'. (default: true)
+  --smallcheck-depth NUMBER
+                           Depth to use for smallcheck tests
+  --smallcheck-max-count NUMBER
+                           Maximum smallcheck test count
   --quickcheck-tests NUMBER
-                           Number of test cases for QuickCheck to generate
+                           Number of test cases for QuickCheck to generate.
+                           Underscores accepted: e.g. 10_000_000
   --quickcheck-replay SEED Random seed to use for replaying a previous test run
                            (use same --quickcheck-max-size)
   --quickcheck-show-replay Show a replay token for replaying tests
@@ -210,8 +227,9 @@ Available options:
                            Maximum number of discared tests per successful test
                            before giving up
   --quickcheck-verbose     Show the generated test cases
-  --smallcheck-depth NUMBER
-                           Depth to use for smallcheck tests
+  --quickcheck-shrinks NUMBER
+                           Number of shrinks allowed before QuickCheck will fail
+                           a test
 ```
 
 Every option can be passed via environment. To obtain the environment variable
@@ -728,7 +746,7 @@ tests. The resource may or may not be managed by `withResource`.)
 
 Here are some caveats to keep in mind regarding dependencies in Tasty:
 
-1. If Test B depends on Test A, remember that either of the may be filtered out
+1. If Test B depends on Test A, remember that either of them may be filtered out
    using the `--pattern` option. Collecting the dependency info happens *after*
    filtering. Therefore, if Test A is filtered out, Test B will run
    unconditionally, and if Test B is filtered out, it simply won't run.
@@ -761,7 +779,7 @@ Here are some caveats to keep in mind regarding dependencies in Tasty:
 
     **A**: It is not recommended that you print anything to the console when using the
     console test reporter (which is the default one).
-    See [#103](https://github.com/feuerbach/tasty/issues/103) for the
+    See [#103](https://github.com/UnkindPartition/tasty/issues/103) for the
     discussion.
 
     Some ideas on how to work around this:
@@ -777,8 +795,14 @@ Here are some caveats to keep in mind regarding dependencies in Tasty:
     output. A workaround is to disable ANSI tricks: pass `--ansi-tricks=false`
     on the command line or set `TASTY_ANSI_TRICKS=false` in the environment.
 
-    See [issue #152](https://github.com/feuerbach/tasty/issues/152).
+    See [issue #152](https://github.com/UnkindPartition/tasty/issues/152).
 
+3. **Q**: Patterns with slashes do not work on Windows. How can I fix it?
+  
+   **A**: If you are running Git for Windows terminal, it has a habit of converting slashes 
+   to backslashes. Set `MSYS_NO_PATHCONV=1` to prevent this behaviour, or follow other 
+   suggestions from [Known Issues](https://github.com/git-for-windows/build-extra/blob/main/ReleaseNotes.md#known-issues).
+   
 ## Press
 
 Blog posts and other publications related to tasty. If you wrote or just found
@@ -792,7 +816,7 @@ something not mentioned here, send a pull request!
 * [Custom options in Tasty][custom-options-article]
 * [Resources in Tasty (update)](https://ro-che.info/articles/2013-12-29-tasty-resources-2)
 * [Announcing tasty-rerun](https://ocharles.org.uk/blog/posts/2014-01-20-announcing-tasty-rerun.html)
-* [Code testing in Haskell revisited (with Tasty)](https://lambda.jstolarek.com/2014/01/code-testing-in-haskell-revisited-with-tasty/)
+* [Code testing in Haskell revisited (with Tasty)](http://ics.p.lodz.pl/~stolarek/blog/2014/01/code-testing-in-haskell-revisited-with-tasty/)
 * [New patterns in tasty][awk-patterns-article]
 * [Screencast: Dynamic Test Suites in Haskell using Hspec and Tasty](https://www.youtube.com/watch?v=PGsDvgmZF7A)
 * [Automatically generated directories for tasty tests][tasty-directories]
@@ -801,10 +825,14 @@ something not mentioned here, send a pull request!
 [awk-patterns-article]: https://ro-che.info/articles/2018-01-08-tasty-new-patterns
 [tasty-directories]: https://nmattia.com/posts/2018-04-30-tasty-test-names.html
 
+## GHC version support policy
+
+We only support the GHC/base versions [from the last 5 years](https://wiki.haskell.org/Base_package#Versions).
+
 Maintainers
 -----------
 
-[Roman Cheplyaka](https://github.com/feuerbach) is the primary maintainer.
+[Roman Cheplyaka](https://github.com/UnkindPartition) is the primary maintainer.
 
 [Oliver Charles](https://github.com/ocharles) is the backup maintainer. Please
 get in touch with him if the primary maintainer cannot be reached.

@@ -3,6 +3,7 @@ module Test.Tasty.Providers
   ( IsTest(..)
   , testPassed
   , testFailed
+  , testFailedDetails
   , Result
   , Progress(..)
   , TestName
@@ -12,6 +13,7 @@ module Test.Tasty.Providers
   where
 
 import Test.Tasty.Core
+import Test.Tasty.Providers.ConsoleFormat (ResultDetailsPrinter, noResultDetails)
 
 -- | Convert a test to a leaf of the 'TestTree'
 singleTest :: IsTest t => TestName -> t -> TestTree
@@ -26,6 +28,7 @@ testPassed desc = Result
   , resultDescription = desc
   , resultShortDescription = "OK"
   , resultTime = 0
+  , resultDetailsPrinter = noResultDetails
   }
 
 -- | 'Result' of a failed test
@@ -37,4 +40,15 @@ testFailed desc = Result
   , resultDescription = desc
   , resultShortDescription = "FAIL"
   , resultTime = 0
+  , resultDetailsPrinter = noResultDetails
   }
+
+-- | 'Result' of a failed test with custom details printer
+--
+-- @since 1.3.1
+testFailedDetails
+  :: String               -- ^ description
+  -> ResultDetailsPrinter -- ^ details printer
+  -> Result
+testFailedDetails desc printer = (testFailed desc)
+  { resultDetailsPrinter = printer }
